@@ -1,0 +1,129 @@
+@import "tailwindcss";
+
+@theme {
+  /* Premium Dark Theme Core Colors */
+  --color-surface-900: #0A0A0B;   /* Deepest background */
+  --color-surface-800: #121214;   /* Base surface */
+  --color-surface-700: #18181B;   /* Elevated surface */
+  --color-surface-600: #27272A;   /* Sub-elevated / Borders */
+  
+  --color-neon-green: #10B981;    /* Primary brand action */
+  --color-neon-teal: #14B8A6;     /* Secondary brand element */
+  --color-neon-blue: #3B82F6;     /* Highlights */
+  --color-neon-purple: #8B5CF6;   /* AI & Automation */
+  
+  /* Text */
+  --color-text-100: #FFFFFF;
+  --color-text-200: #E4E4E7;
+  --color-text-300: #A1A1AA;
+  --color-text-400: #71717A;
+
+  /* Fonts */
+  --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
+  --font-display: 'Plus Jakarta Sans', system-ui, sans-serif;
+}
+
+@layer base {
+  :root {
+    color-scheme: dark;
+  }
+  
+  html, body {
+    @apply h-full bg-surface-900 text-text-200 font-sans antialiased selection:bg-neon-green/30 selection:text-white overscroll-none;
+  }
+  
+  h1, h2, h3, h4, h5, h6 {
+    @apply font-display tracking-tight text-white;
+  }
+  
+  /* Custom Scrollbar - Sleek */
+  ::-webkit-scrollbar {
+    @apply w-1.5 h-1.5;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-transparent;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-600/50 rounded-full hover:bg-surface-600 transition-colors;
+  }
+}
+
+@layer utilities {
+  /* Premium Glass Effects */
+  .glass-panel {
+    @apply bg-surface-800/60 backdrop-blur-xl border border-white/[0.04] shadow-[0_4px_24px_rgba(0,0,0,0.4)] rounded-2xl;
+  }
+  
+  .glass-card {
+    @apply bg-surface-700/40 backdrop-blur-md border border-white/[0.04] shadow-sm rounded-xl hover:border-white/[0.08] hover:bg-surface-700/60 transition-all duration-300;
+  }
+  
+  .glass-input {
+    @apply bg-surface-900/50 backdrop-blur-sm border border-white/[0.06] rounded-xl text-text-100 focus:border-neon-green/50 focus:ring-1 focus:ring-neon-green/50 focus:bg-surface-800/80 transition-all duration-200 placeholder:text-text-400;
+  }
+
+  /* Interactive Elements */
+  .btn-primary {
+    @apply relative overflow-hidden bg-white text-surface-900 font-medium rounded-xl hover:bg-text-200 transition-colors shadow-[0_0_15px_rgba(255,255,255,0.1)] active:scale-[0.98];
+  }
+  
+  .btn-secondary {
+    @apply bg-surface-700/80 text-text-200 font-medium rounded-xl border border-white/[0.04] hover:bg-surface-600 hover:text-white transition-all active:scale-[0.98];
+  }
+
+  /* Mesh Gradients & Glows */
+  .glow-green {
+    box-shadow: 0 0 24px -4px rgba(16, 185, 129, 0.4);
+  }
+  
+  .glow-blue {
+    box-shadow: 0 0 24px -4px rgba(59, 130, 246, 0.4);
+  }
+
+  .mesh-bg {
+    background-image: 
+      radial-gradient(circle at 15% 50%, rgba(16, 185, 129, 0.08) 0%, transparent 45%),
+      radial-gradient(circle at 85% 30%, rgba(139, 92, 246, 0.08) 0%, transparent 45%);
+  }
+
+  .chat-mesh-bg {
+    background-image: 
+      radial-gradient(circle at 50% 0%, rgba(16, 185, 129, 0.03) 0%, transparent 60%);
+  }
+
+  /* Chat Bubbles (Modern SaaS Style, no tails) */
+  .bubble-out {
+    @apply bg-neon-green/10 text-neon-green border border-neon-green/20 rounded-2xl rounded-tr-sm shadow-sm;
+  }
+  .bubble-in {
+    @apply bg-surface-700/80 text-text-100 border border-white/[0.04] rounded-2xl rounded-tl-sm shadow-sm backdrop-blur-sm;
+  }
+
+  /* Animations */
+  .animate-fade-in {
+    animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+  
+  .animate-slide-up {
+    animation: slideUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+  }
+
+  .animate-pulse-slow {
+    animation: pulseSlow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  }
+  
+  @keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  
+  @keyframes slideUp {
+    from { opacity: 0; transform: translateY(12px) scale(0.98); }
+    to { opacity: 1; transform: translateY(0) scale(1); }
+  }
+
+  @keyframes pulseSlow {
+    0%, 100% { opacity: 1; }
+    50% { opacity: .5; }
+  }
+}

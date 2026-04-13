@@ -1,0 +1,12 @@
+# Edge functions under supabase/ import https://deno.land/... which makes Nixpacks
+# pick the Deno provider (no npm). This app is built with Node/Vite — force Node.
+providers = ["node"]
+
+[phases.install]
+cmds = ["npm ci"]
+
+[phases.build]
+cmds = ["npm run build"]
+
+[start]
+cmd = "npm start"

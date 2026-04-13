@@ -259,8 +259,8 @@ app.post('/api/whatsapp-webhook', async (req, res) => {
 // -------------------------------------------------------------
 app.use(express.static(path.join(__dirname, 'dist')));
 
-// Roteamento fallback do React (Páginas do SPA)
-app.get('*', (req, res) => {
+// Roteamento fallback do React (SPA). Express 5 / path-to-regexp v8 não aceita '*'.
+app.get('/*wildcard', (req, res) => {
   res.sendFile(path.join(__dirname, 'dist', 'index.html'));
 });
 

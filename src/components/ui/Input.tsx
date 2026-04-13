@@ -11,7 +11,7 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
     return (
       <div className="w-full">
         {label && (
-          <label className="block text-xs font-semibold text-text-300 mb-1.5 ml-1 select-none">
+          <label className="block text-xs font-semibold text-text-300 mb-1.5 ml-1 select-none leading-5">
             {label}
           </label>
         )}
@@ -24,8 +24,8 @@ export const Input = forwardRef<HTMLInputElement, InputProps>(
           <input
             ref={ref}
             className={`
-              glass-input w-full h-11 px-4 
-              ${icon ? 'pl-10' : ''}
+              glass-input w-full h-10 md:h-11 px-3 md:px-4
+              ${icon ? 'pl-10 md:pl-10' : ''}
               ${error ? '!border-red-500/50 focus:!ring-red-500/20' : ''}
               ${className}
             `}

@@ -1,106 +1,106 @@
-// supabase/functions/whatsapp-webhook/index.ts
-// Handles incoming webhooks from WhatsApp Cloud API
+import { createClient, SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
 
-import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
+const WHATSAPP_API_VERSION = "v22.0";
+const WHATSAPP_API_BASE = `https://graph.facebook.com/${WHATSAPP_API_VERSION}`;
+const PROCESS_AGENT_JOBS_URL = `${Deno.env.get("SUPABASE_URL")}/functions/v1/process-agent-jobs`;
 
-const VERIFY_TOKEN = Deno.env.get("WHATSAPP_VERIFY_TOKEN") || "zapflow_default_token";
+function getSupabaseClient(): SupabaseClient {
+  return createClient(
+    Deno.env.get("SUPABASE_URL")!,
+    Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!
+  );
+}
+
+function runAsync(task: Promise<unknown>) {
+  const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (promise: Promise<unknown>) => void } }).EdgeRuntime;
+  if (runtime?.waitUntil) {
+    runtime.waitUntil(task);
+  } else {
+    task.catch((error) => console.error("Async task failed:", error));
+  }
+}
 
 Deno.serve(async (req: Request) => {
   const url = new URL(req.url);
 
-  // ===== GET: Webhook Verification =====
+  // ===== GET: Webhook Verification (multi-tenant) =====
   if (req.method === "GET") {
     const mode = url.searchParams.get("hub.mode");
     const token = url.searchParams.get("hub.verify_token");
     const challenge = url.searchParams.get("hub.challenge");
 
-    if (mode === "subscribe" && token) {
-      if (token === VERIFY_TOKEN) {
-        console.log("✅ Webhook verified successfully (ENV)");
-        return new Response(challenge, { status: 200 });
-      }
-      
-      // Validação Multi-tenant 
+    if (mode === "subscribe" && token && challenge) {
       try {
-        const supabaseUrl = Deno.env.get("SUPABASE_URL");
-        const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_ANON_KEY");
-        if (!supabaseUrl || !supabaseKey) {
-           console.warn("Missing Supabase env vars, cannot verify via DB.");
-           return new Response("Forbidden", { status: 403 });
-        }
-        const supabase = createClient(supabaseUrl, supabaseKey);
-
+        const supabase = getSupabaseClient();
         const { data } = await supabase
           .from("whatsapp_accounts")
           .select("id")
-          .or(`display_name.eq.${token},webhook_verify_token.eq.${token}`)
+          .eq("webhook_verify_token", token)
           .limit(1);
 
         if (data && data.length > 0) {
-          console.log("✅ Webhook verified successfully (DB Match)");
-          return new Response(challenge, { status: 200 });
+          console.log("Webhook verified for account:", data[0].id);
+          return new Response(challenge, {
+            status: 200,
+            headers: { "Content-Type": "text/plain" },
+          });
         }
       } catch (err) {
-        console.error("DB check error", err);
+        console.error("DB verify error:", err);
       }
     }
 
-    console.warn("❌ Webhook verification failed");
+    console.warn("Webhook verification failed");
     return new Response("Forbidden", { status: 403 });
   }
 
   // ===== POST: Incoming Messages & Status Updates =====
   if (req.method === "POST") {
     try {
-      const supabaseUrl = Deno.env.get("SUPABASE_URL");
-      const supabaseKey = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") || Deno.env.get("SUPABASE_ANON_KEY");
-      if (!supabaseUrl || !supabaseKey) {
-          console.error("Missing SUPABASE env vars inside POST");
-          return new Response("Server config error", { status: 500 });
-      }
-      const supabase = createClient(supabaseUrl, supabaseKey);
+      const supabase = getSupabaseClient();
       const body = await req.json();
-      console.log("📩 Webhook received:", JSON.stringify(body).slice(0, 500));
+      const entries = Array.isArray(body?.entry) ? body.entry : [];
+      if (entries.length === 0) return new Response("OK", { status: 200 });
 
-      const entry = body?.entry?.[0];
-      if (!entry) return new Response("OK", { status: 200 });
+      for (const entry of entries) {
+        const changes = Array.isArray((entry as Record<string, unknown>)?.changes)
+          ? ((entry as Record<string, unknown>).changes as Record<string, unknown>[])
+          : [];
 
-      const changes = entry.changes?.[0];
-      if (!changes) return new Response("OK", { status: 200 });
+        for (const change of changes) {
+          const value = (change as Record<string, unknown>)?.value as Record<string, unknown> | undefined;
+          const phoneNumberId = String((value?.metadata as Record<string, unknown> | undefined)?.phone_number_id || "");
+          if (!phoneNumberId) continue;
 
-      const value = changes.value;
-      const phoneNumberId = value?.metadata?.phone_number_id;
+          const { data: waAccount } = await supabase
+            .from("whatsapp_accounts")
+            .select("id, workspace_id, access_token")
+            .eq("phone_number_id", phoneNumberId)
+            .single();
 
-      // Find WhatsApp account
-      const { data: waAccount } = await supabase
-        .from("whatsapp_accounts")
-        .select("id, workspace_id")
-        .eq("phone_number_id", phoneNumberId)
-        .single();
+          if (!waAccount) {
+            console.warn("No WhatsApp account for phone_number_id:", phoneNumberId);
+            continue;
+          }
 
-      if (!waAccount) {
-        console.warn("⚠️ No WhatsApp account found for phone_number_id:", phoneNumberId);
-        return new Response("OK", { status: 200 });
-      }
+          const messages = Array.isArray(value?.messages) ? value.messages : [];
+          const statuses = Array.isArray(value?.statuses) ? value.statuses : [];
+          const contactInfo = Array.isArray(value?.contacts) ? value.contacts[0] : undefined;
 
-      // Handle incoming messages
-      if (value.messages) {
-        for (const msg of value.messages) {
-          await handleIncomingMessage(waAccount, msg, value.contacts?.[0]);
-        }
-      }
+          for (const msg of messages) {
+            await handleIncomingMessage(supabase, waAccount, msg as Record<string, unknown>, contactInfo as Record<string, unknown> | undefined);
+          }
 
-      // Handle status updates
-      if (value.statuses) {
-        for (const status of value.statuses) {
-          await handleStatusUpdate(status);
+          for (const status of statuses) {
+            await handleStatusUpdate(supabase, status as Record<string, unknown>);
+          }
         }
       }
 
       return new Response("EVENT_RECEIVED", { status: 200 });
     } catch (error) {
-      console.error("❌ Webhook error:", error);
-      return new Response("Error", { status: 200 }); // Always return 200 to avoid retries
+      console.error("Webhook error:", error);
+      return new Response("OK", { status: 200 });
     }
   }
 
@@ -108,7 +108,8 @@ Deno.serve(async (req: Request) => {
 });
 
 async function handleIncomingMessage(
-  waAccount: { id: string; workspace_id: string },
+  supabase: SupabaseClient,
+  waAccount: { id: string; workspace_id: string; access_token?: string },
   msg: Record<string, unknown>,
   contactInfo: Record<string, unknown> | undefined
 ) {
@@ -117,7 +118,6 @@ async function handleIncomingMessage(
     ? String((contactInfo.profile as Record<string, unknown>).name)
     : null;
 
-  // Upsert contact
   const { data: contact } = await supabase
     .from("contacts")
     .upsert(
@@ -134,7 +134,6 @@ async function handleIncomingMessage(
 
   if (!contact) return;
 
-  // Upsert conversation
   const { data: conversation } = await supabase
     .from("conversations")
     .upsert(
@@ -151,11 +150,63 @@ async function handleIncomingMessage(
 
   if (!conversation) return;
 
-  // Parse message content
   const messageType = String(msg.type);
   let content = null;
   let mediaUrl = null;
   let mediaType = null;
+
+  const downloadIncomingMedia = async (
+    media: Record<string, unknown> | undefined,
+    fallbackKind: string
+  ) => {
+    if (!media || !waAccount.access_token) return null;
+
+    const mediaId = String(media.id || "");
+    const directUrl = String(media.url || "");
+    const mimeType = String(media.mime_type || "");
+
+    let resolvedUrl = directUrl;
+    if (!resolvedUrl && mediaId) {
+      const meta = await fetch(`${WHATSAPP_API_BASE}/${mediaId}`, {
+        headers: { Authorization: `Bearer ${waAccount.access_token}` },
+      });
+      if (meta.ok) {
+        const metaJson = await meta.json();
+        resolvedUrl = metaJson.url || "";
+      }
+    }
+
+    if (!resolvedUrl) return null;
+
+    const mediaResponse = await fetch(resolvedUrl, {
+      headers: { Authorization: `Bearer ${waAccount.access_token}` },
+    });
+    if (!mediaResponse.ok) return null;
+
+    const blob = await mediaResponse.blob();
+    const effectiveMime = mimeType || mediaResponse.headers.get("content-type") || "application/octet-stream";
+    const ext =
+      effectiveMime.includes("ogg") ? "ogg" :
+      effectiveMime.includes("mpeg") ? "mp3" :
+      effectiveMime.includes("mp4") ? "mp4" :
+      effectiveMime.includes("jpeg") ? "jpg" :
+      effectiveMime.includes("png") ? "png" :
+      effectiveMime.includes("pdf") ? "pdf" :
+      fallbackKind;
+
+    const path = `${waAccount.workspace_id}/inbound/${Date.now()}-${mediaId || crypto.randomUUID()}.${ext}`;
+    const { error: uploadError } = await supabase.storage
+      .from("media")
+      .upload(path, blob, { contentType: effectiveMime, upsert: true });
+
+    if (uploadError) {
+      console.error("Failed to store inbound media:", uploadError);
+      return null;
+    }
+
+    const { data } = supabase.storage.from("media").getPublicUrl(path);
+    return data.publicUrl;
+  };
 
   switch (messageType) {
     case "text":
@@ -164,30 +215,34 @@ async function handleIncomingMessage(
     case "image":
       content = String((msg.image as Record<string, unknown>)?.caption || "");
       mediaType = "image";
+      mediaUrl = await downloadIncomingMedia(msg.image as Record<string, unknown> | undefined, "jpg");
       break;
     case "audio":
       mediaType = "audio";
+      mediaUrl = await downloadIncomingMedia(msg.audio as Record<string, unknown> | undefined, "ogg");
       break;
     case "video":
       content = String((msg.video as Record<string, unknown>)?.caption || "");
       mediaType = "video";
+      mediaUrl = await downloadIncomingMedia(msg.video as Record<string, unknown> | undefined, "mp4");
       break;
     case "document":
       content = String((msg.document as Record<string, unknown>)?.filename || "Documento");
       mediaType = "document";
+      mediaUrl = await downloadIncomingMedia(msg.document as Record<string, unknown> | undefined, "bin");
       break;
     case "sticker":
       mediaType = "sticker";
       break;
-    case "location":
+    case "location": {
       const loc = msg.location as Record<string, unknown>;
-      content = `📍 ${loc?.latitude}, ${loc?.longitude}`;
+      content = `${loc?.latitude}, ${loc?.longitude}`;
       break;
+    }
     default:
       content = `[${messageType}]`;
   }
 
-  // Insert message
   await supabase.from("messages").insert({
     conversation_id: conversation.id,
     workspace_id: waAccount.workspace_id,
@@ -201,10 +256,118 @@ async function handleIncomingMessage(
     metadata: { timestamp: msg.timestamp },
   });
 
-  console.log(`✅ Message saved: ${messageType} from ${phone}`);
+  await supabase
+    .from("conversations")
+    .update({
+      last_message_at: new Date().toISOString(),
+      last_message_preview: content || `[${messageType}]`,
+    })
+    .eq("id", conversation.id);
+
+  // Enqueue AI job if active
+  try {
+    const { data: conv } = await supabase
+      .from("conversations")
+      .select("is_ai_active")
+      .eq("id", conversation.id)
+      .single();
+
+    if (conv?.is_ai_active && messageType === "text" && content) {
+      const { data: settings } = await supabase
+        .from("agent_settings")
+        .select("is_active, quiet_window_seconds")
+        .eq("workspace_id", waAccount.workspace_id)
+        .maybeSingle();
+
+      if (!settings?.is_active) {
+        console.log("Skipping AI enqueue because workspace agent is disabled");
+        return;
+      }
+
+      const quietWindowSeconds = Math.max(0, Number(settings.quiet_window_seconds || 15));
+      const now = Date.now();
+      const nowIso = new Date(now).toISOString();
+      const nextAttemptAt = new Date(now + quietWindowSeconds * 1000).toISOString();
+
+      await supabase
+        .from("conversations")
+        .update({
+          ai_pending_message_wamid: String(msg.id),
+          ai_pending_since: nowIso,
+        })
+        .eq("id", conversation.id)
+
+      const { data: existingJobs } = await supabase
+        .from("agent_jobs")
+        .select("id, status, batch_started_at")
+        .eq("conversation_id", conversation.id)
+        .in("status", ["pending", "retry", "processing"])
+        .order("created_at", { ascending: false })
+        .limit(1);
+
+      const existingJob = existingJobs?.[0];
+
+      if (existingJob && (existingJob.status === "pending" || existingJob.status === "retry")) {
+        await supabase
+          .from("agent_jobs")
+          .update({
+            contact_id: contact.id,
+            contact_name: contactName || phone,
+            latest_message: content,
+            message_id: String(msg.id),
+            status: "pending",
+            next_attempt_at: nextAttemptAt,
+            batch_started_at: existingJob.status === "retry" ? nowIso : existingJob.batch_started_at,
+            attempt_count: existingJob.status === "retry" ? 0 : undefined,
+            locked_at: null,
+            locked_by: null,
+            last_error: null,
+            last_error_code: null,
+            last_error_details: {},
+            fallback_reason: null,
+            fallback_sent_at: null,
+            completed_at: null,
+          })
+          .eq("id", existingJob.id);
+      } else {
+        await supabase
+          .from("agent_jobs")
+          .insert({
+            workspace_id: waAccount.workspace_id,
+            conversation_id: conversation.id,
+            contact_id: contact.id,
+            contact_name: contactName || phone,
+            latest_message: content,
+            message_id: String(msg.id),
+            batch_started_at: nowIso,
+            status: "pending",
+            next_attempt_at: nextAttemptAt,
+          });
+      }
+
+      runAsync(fetch(PROCESS_AGENT_JOBS_URL, {
+        method: "POST",
+        headers: {
+          "Authorization": `Bearer ${Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          reason: "new_inbound_message",
+          conversation_id: conversation.id,
+        }),
+      }));
+    }
+  } catch (err) {
+    console.error("AI agent trigger error:", err);
+  }
+
+  console.log(`Message saved: ${messageType} from ${phone}`);
 }
 
-async function handleStatusUpdate(status: Record<string, unknown>) {
+async function handleStatusUpdate(
+  supabase: SupabaseClient,
+  status: Record<string, unknown>
+) {
   const wamid = String(status.id);
   const statusValue = String(status.status);
 
@@ -218,7 +381,6 @@ async function handleStatusUpdate(status: Record<string, unknown>) {
   const mappedStatus = statusMap[statusValue];
   if (!mappedStatus) return;
 
-  // Update message status
   await supabase
     .from("messages")
     .update({
@@ -227,7 +389,6 @@ async function handleStatusUpdate(status: Record<string, unknown>) {
     })
     .eq("wamid", wamid);
 
-  // Update campaign_log if exists
   const updateData: Record<string, unknown> = { status: mappedStatus };
   if (mappedStatus === "delivered") updateData.delivered_at = new Date().toISOString();
   if (mappedStatus === "read") updateData.read_at = new Date().toISOString();
@@ -238,5 +399,5 @@ async function handleStatusUpdate(status: Record<string, unknown>) {
     .update(updateData)
     .eq("wamid", wamid);
 
-  console.log(`📊 Status updated: ${wamid} → ${mappedStatus}`);
+  console.log(`Status updated: ${wamid} -> ${mappedStatus}`);
 }

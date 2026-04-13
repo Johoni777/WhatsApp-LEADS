@@ -27,6 +27,7 @@ export interface WhatsAppAccount {
 export interface Contact {
   id: string;
   workspace_id: string;
+  group_id?: string | null;
   name: string | null;
   phone: string;
   email: string | null;
@@ -36,6 +37,14 @@ export interface Contact {
   created_at: string;
 }
 
+export interface ContactGroup {
+  id: string;
+  workspace_id: string;
+  name: string;
+  created_at: string;
+  updated_at?: string;
+}
+
 export interface Conversation {
   id: string;
   workspace_id: string;
@@ -43,13 +52,13 @@ export interface Conversation {
   whatsapp_account_id: string | null;
   status: 'active' | 'archived' | 'blocked';
   last_message_at: string | null;
+  last_message_preview: string | null;
   unread_count: number;
   assigned_to: string | null;
   is_ai_active: boolean;
   created_at: string;
   // Joined
   contact?: Contact;
-  last_message?: Message;
 }
 
 export interface Message {
@@ -65,6 +74,7 @@ export interface Message {
   status: 'pending' | 'sent' | 'delivered' | 'read' | 'failed';
   error_details: Record<string, unknown> | null;
   metadata: Record<string, unknown>;
+  is_from_ai?: boolean;
   created_at: string;
 }
 
@@ -75,6 +85,7 @@ export interface Campaign {
   template_name: string;
   template_language: string;
   template_components: TemplateComponent[];
+  variable_mapping?: Record<string, string>;
   status: 'draft' | 'scheduled' | 'running' | 'paused' | 'completed' | 'failed';
   total_contacts: number;
   sent_count: number;
@@ -84,6 +95,7 @@ export interface Campaign {
   scheduled_at: string | null;
   started_at: string | null;
   completed_at: string | null;
+  created_by?: string | null;
   created_at: string;
 }
 
@@ -107,11 +119,79 @@ export interface AgentSettings {
   id: string;
   workspace_id: string;
   system_prompt: string | null;
+  prompt_config?: AgentPromptConfig | null;
   model: string;
   temperature: number;
   max_tokens: number;
   is_active: boolean;
   fallback_message: string;
+  response_delay_seconds: number;
+  message_gap_seconds: number;
+  quiet_window_seconds: number;
+  context_message_limit: number;
+  tag_rules: AgentTagRule[];
+  created_at: string;
+}
+
+export interface AgentTagRule {
+  tag: string;
+  mode: 'agent_off' | 'prompt_append';
+  prompt?: string | null;
+}
+
+export interface AgentPromptConfig {
+  agent_name: string;
+  company_name: string;
+  role_description: string;
+  mission: string;
+  lead_context: string;
+  product_name: string;
+  product_price: string;
+  product_uses: string;
+  first_response_rule: string;
+  first_response_example: string;
+  flow_steps: string;
+  critical_rules: string;
+  safety_rules: string;
+  style_rules: string;
+  extra_instructions: string;
+}
+
+export interface AgentJob {
+  id: string;
+  workspace_id: string;
+  conversation_id: string;
+  contact_id: string | null;
+  contact_name: string | null;
+  latest_message: string | null;
+  message_id: string | null;
+  batch_started_at: string | null;
+  status: 'pending' | 'processing' | 'retry' | 'completed' | 'fallback_sent' | 'failed' | 'cancelled';
+  attempt_count: number;
+  max_attempts: number;
+  next_attempt_at: string | null;
+  last_attempt_at?: string | null;
+  locked_at?: string | null;
+  locked_by?: string | null;
+  last_error?: string | null;
+  last_error_code?: string | null;
+  last_error_details?: Record<string, unknown> | null;
+  fallback_reason?: string | null;
+  fallback_sent_at?: string | null;
+  completed_at?: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface AgentJobLog {
+  id: string;
+  job_id: string;
+  workspace_id: string;
+  conversation_id: string;
+  level: 'info' | 'warn' | 'error';
+  event_type: string;
+  message: string;
+  details: Record<string, unknown>;
   created_at: string;
 }
 

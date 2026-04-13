@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useState } from 'react';
 import {
   MessageCircle, Users, Send, CheckCheck,
   Eye, ArrowUpRight, Megaphone, Activity, Bot
@@ -7,6 +7,7 @@ import { formatNumber } from '@/utils/formatters';
 import { supabase } from '@/services/supabase';
 import { useAuthStore } from '@/stores/authStore';
 import { Link } from 'react-router-dom';
+import { useRefreshOnFocus } from '@/hooks/useRefreshOnFocus';
 
 export function DashboardPage() {
   const { workspace } = useAuthStore();
@@ -17,41 +18,38 @@ export function DashboardPage() {
     contacts: 0
   });
 
-  useEffect(() => {
-    async function loadStats() {
-      if (!workspace) return;
+  const loadStats = useCallback(async () => {
+    if (!workspace) return;
 
-      // Real query counts from DB
-      const { count: contactsCount } = await supabase
-        .from('contacts')
-        .select('*', { count: 'exact', head: true })
-        .eq('workspace_id', workspace.id);
+    const { count: contactsCount } = await supabase
+      .from('contacts')
+      .select('*', { count: 'exact', head: true })
+      .eq('workspace_id', workspace.id);
 
-      const { data: messages } = await supabase
-        .from('messages')
-        .select('status')
-        .eq('workspace_id', workspace.id)
-        .eq('direction', 'outbound');
+    const { data: messages } = await supabase
+      .from('messages')
+      .select('status')
+      .eq('workspace_id', workspace.id)
+      .eq('direction', 'outbound');
 
-      let sent = 0, delivered = 0, read = 0;
-      if (messages) {
-        messages.forEach(m => {
-          if (m.status === 'sent' || m.status === 'delivered' || m.status === 'read') sent++;
-          if (m.status === 'delivered' || m.status === 'read') delivered++;
-          if (m.status === 'read') read++;
-        });
-      }
-
-      setStats({
-        sent: sent || 0,
-        delivered: delivered || 0,
-        read: read || 0,
-        contacts: contactsCount || 0
+    let sent = 0, delivered = 0, read = 0;
+    if (messages) {
+      messages.forEach(m => {
+        if (m.status === 'sent' || m.status === 'delivered' || m.status === 'read') sent++;
+        if (m.status === 'delivered' || m.status === 'read') delivered++;
+        if (m.status === 'read') read++;
       });
     }
 
-    loadStats();
+    setStats({
+      sent: sent || 0,
+      delivered: delivered || 0,
+      read: read || 0,
+      contacts: contactsCount || 0
+    });
   }, [workspace]);
+
+  useRefreshOnFocus(loadStats, '/');
 
   const statCards = [
     { label: 'Mensagens Enviadas', value: stats.sent, change: 12.5, icon: Send, color: 'text-neon-green', bg: 'bg-neon-green/10', border: 'border-neon-green/20' },
@@ -61,17 +59,17 @@ export function DashboardPage() {
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-8 animate-fade-in relative">
+    <div className="page-shell page-stack animate-fade-in relative">
       <div className="fixed top-0 left-1/4 w-[500px] h-[500px] bg-neon-green/5 rounded-full blur-[150px] pointer-events-none" />
 
-      <div className="flex items-center justify-between relative z-10">
+      <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between relative z-10">
         <div>
-          <h1 className="text-3xl font-display font-bold text-white tracking-tight">Dashboard</h1>
-          <p className="text-sm text-text-400 mt-1">Visão geral do workspace: {workspace?.name}</p>
+          <h1 className="section-title">Dashboard</h1>
+          <p className="section-subtitle">Visão geral do workspace: {workspace?.name}</p>
         </div>
       </div>
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 relative z-10">
+      <div className="grid grid-cols-1 sm:grid-cols-2 xl:grid-cols-4 gap-4 relative z-10">
         {statCards.map((stat, i) => (
           <div key={stat.label} className="glass-panel p-6 relative overflow-hidden group">
             <div className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/[0.03] to-transparent group-hover:translate-x-full duration-1000 transition-transform" />
@@ -88,7 +86,7 @@ export function DashboardPage() {
         ))}
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 relative z-10">
+      <div className="grid grid-cols-1 xl:grid-cols-3 gap-4 md:gap-6 relative z-10">
         <div className="lg:col-span-2 glass-panel p-6">
           <div className="flex items-center gap-3 mb-6">
             <div className="p-2 rounded-lg bg-surface-700 text-text-200"><Activity className="w-5 h-5" /></div>

@@ -8,7 +8,11 @@ interface CampaignState {
   isLoading: boolean;
 
   fetchCampaigns: () => Promise<void>;
-  createCampaign: (data: Partial<Campaign>) => Promise<{ error: string | null }>;
+  createCampaign: (data: Partial<Campaign>) => Promise<{ error: string | null; campaignId?: string }>;
+  updateCampaignMetrics: (
+    id: string,
+    data: Pick<Campaign, 'status' | 'sent_count' | 'failed_count'> & Partial<Pick<Campaign, 'delivered_count' | 'read_count' | 'completed_at' | 'started_at'>>
+  ) => Promise<{ error: string | null }>;
 }
 
 export const useCampaignStore = create<CampaignState>((set, get) => ({
@@ -37,18 +41,36 @@ export const useCampaignStore = create<CampaignState>((set, get) => ({
 
   createCampaign: async (data) => {
     const workspaceId = useAuthStore.getState().workspace?.id;
+    const userId = useAuthStore.getState().user?.id;
     if (!workspaceId) return { error: 'Sem workspace' };
 
     try {
+      const { data: inserted, error } = await supabase
+        .from('campaigns')
+        .insert({ ...data, workspace_id: workspaceId, created_by: userId ?? null })
+        .select('id')
+        .single();
+        
+      if (error) throw error;
+      await get().fetchCampaigns();
+      return { error: null, campaignId: inserted?.id };
+    } catch (err: any) {
+      return { error: err.message };
+    }
+  },
+
+  updateCampaignMetrics: async (id, data) => {
+    try {
       const { error } = await supabase
         .from('campaigns')
-        .insert({ ...data, workspace_id: workspaceId });
-        
+        .update(data)
+        .eq('id', id);
+
       if (error) throw error;
       await get().fetchCampaigns();
       return { error: null };
     } catch (err: any) {
-      return { error: err.message };
+      return { error: err.message || 'Erro ao atualizar campanha' };
     }
   }
 }));

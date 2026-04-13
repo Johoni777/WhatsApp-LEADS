@@ -18,7 +18,7 @@ app.use(cors());
 app.use(express.json());
 
 // Token padrão usado para todas as interações caso não seja multiplas sessoes
-const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "zapflow_97d1kb78";
+const VERIFY_TOKEN = process.env.WHATSAPP_VERIFY_TOKEN || "zapflow_97d1kb78"; // Must match what's configured in Meta Dashboard
 
 // Função para processar status da Meta
 async function handleStatusUpdate(supabase, status) {
@@ -152,42 +152,17 @@ async function handleIncomingMessage(supabase, waAccount, msg, contactInfo) {
 // -------------------------------------------------------------
 // ROTA 1: Meta Webhook GET (Validação do Token do App)
 // -------------------------------------------------------------
-app.get('/api/whatsapp-webhook', async (req, res) => {
+app.get('/api/whatsapp-webhook', (req, res) => {
   const mode = req.query['hub.mode'];
   const token = req.query['hub.verify_token'];
   const challenge = req.query['hub.challenge'];
 
-  if (mode === "subscribe" && token) {
-    // 1. Checa a variável de ambiente principal
-    if (token === VERIFY_TOKEN) {
-      console.log("✅ Webhook verified successfully via ENV");
-      return res.status(200).send(challenge);
-    }
-
-    // 2. Tenta checar no Banco se o Token pertence a um Workspace dinâmico
-    try {
-      const supabaseUrl = process.env.VITE_SUPABASE_URL || process.env.SUPABASE_URL;
-      const supabaseKey = process.env.VITE_SUPABASE_ANON_KEY || process.env.SUPABASE_ANON_KEY || process.env.SUPABASE_SERVICE_ROLE_KEY;
-      
-      if (supabaseUrl && supabaseKey) {
-        const supabase = createClient(supabaseUrl, supabaseKey);
-        const { data } = await supabase
-          .from("whatsapp_accounts")
-          .select("id")
-          .or(`display_name.eq.${token},webhook_verify_token.eq.${token}`)
-          .limit(1);
-
-        if (data && data.length > 0) {
-          console.log("✅ Webhook verified successfully via DB");
-          return res.status(200).send(challenge);
-        }
-      }
-    } catch (err) {
-      console.error("DB Match error:", err);
-    }
+  if (mode === "subscribe" && token === VERIFY_TOKEN && challenge) {
+    console.log("Webhook verified successfully");
+    return res.status(200).type('text/plain').send(challenge);
   }
 
-  console.warn("❌ Webhook verification failed");
+  console.warn("Webhook verification failed");
   res.status(403).send('Forbidden');
 });
 

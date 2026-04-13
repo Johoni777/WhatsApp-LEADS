@@ -1,10 +1,13 @@
-// supabase/functions/whatsapp-send/index.ts
-// Sends messages via WhatsApp Cloud API
-
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 
 const WHATSAPP_API_VERSION = "v22.0";
 const WHATSAPP_API_BASE = `https://graph.facebook.com/${WHATSAPP_API_VERSION}`;
+
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Headers': 'authorization, x-client-info, apikey, content-type',
+  'Access-Control-Allow-Methods': 'POST, OPTIONS',
+};
 
 const supabase = createClient(
   Deno.env.get("SUPABASE_URL")!,
@@ -13,27 +16,69 @@ const supabase = createClient(
 
 interface SendRequest {
   workspace_id: string;
-  to: string; // phone number
-  type: "text" | "template" | "image" | "audio" | "document";
+  to: string;
+  type: "text" | "template" | "image" | "audio" | "document" | "video" | "typing";
   content?: string;
   template_name?: string;
   template_language?: string;
   template_components?: unknown[];
   media_url?: string;
+  media_mime?: string;
   conversation_id?: string;
   campaign_log_id?: string;
+  message_id?: string;
+}
+
+async function uploadMediaToMeta(
+  phoneNumberId: string,
+  accessToken: string,
+  mediaUrl: string,
+  mimeType: string
+): Promise<string> {
+  const fileResponse = await fetch(mediaUrl);
+  if (!fileResponse.ok) throw new Error("Failed to download media from storage");
+  const fileBytes = await fileResponse.arrayBuffer();
+  const fileBlob = new Blob([fileBytes], { type: mimeType });
+
+  const form = new FormData();
+  form.append("messaging_product", "whatsapp");
+  form.append("type", mimeType);
+  form.append("file", fileBlob, `media.${mimeType.split('/')[1]?.split(';')[0] || 'bin'}`);
+
+  const uploadUrl = `${WHATSAPP_API_BASE}/${phoneNumberId}/media`;
+  const res = await fetch(uploadUrl, {
+    method: "POST",
+    headers: { "Authorization": `Bearer ${accessToken}` },
+    body: form,
+  });
+
+  const result = await res.json();
+  if (!res.ok) {
+    console.error("Meta Media Upload error:", JSON.stringify(result));
+    throw new Error(result.error?.message || "Media upload failed");
+  }
+
+  console.log("Media uploaded to Meta:", result.id);
+  return result.id;
 }
 
 Deno.serve(async (req: Request) => {
+  if (req.method === 'OPTIONS') {
+    return new Response('ok', { headers: corsHeaders });
+  }
+
   if (req.method !== "POST") {
-    return new Response("Method Not Allowed", { status: 405 });
+    return new Response("Method Not Allowed", { status: 405, headers: corsHeaders });
   }
 
   try {
     const body: SendRequest = await req.json();
     const { workspace_id, to, type } = body;
 
-    // Get WhatsApp account for workspace
+    if (!workspace_id || !to || !type) {
+      return jsonResponse({ error: "Missing required fields: workspace_id, to, type" }, 400);
+    }
+
     const { data: waAccount, error: waError } = await supabase
       .from("whatsapp_accounts")
       .select("*")
@@ -45,8 +90,7 @@ Deno.serve(async (req: Request) => {
       return jsonResponse({ error: "No active WhatsApp account found" }, 400);
     }
 
-    // Build payload based on type
-    let payload: Record<string, unknown> = {
+    const payload: Record<string, unknown> = {
       messaging_product: "whatsapp",
       to: to,
     };
@@ -54,7 +98,7 @@ Deno.serve(async (req: Request) => {
     switch (type) {
       case "text":
         payload.type = "text";
-        payload.text = { body: body.content };
+        payload.text = { body: body.content || "" };
         break;
 
       case "template":
@@ -63,40 +107,61 @@ Deno.serve(async (req: Request) => {
           name: body.template_name,
           language: { code: body.template_language || "pt_BR" },
         };
-        if (body.template_components && body.template_components.length > 0) {
-          payload.template = {
-            ...payload.template as Record<string, unknown>,
-            components: body.template_components,
-          };
+        if (body.template_components?.length) {
+          (payload.template as Record<string, unknown>).components = body.template_components;
         }
         break;
+
+      case "audio": {
+        payload.type = "audio";
+        if (body.media_url) {
+          try {
+            const rawMime = (body.media_mime || "audio/ogg").split(";")[0].trim();
+            const metaMime = rawMime === "audio/webm" ? "audio/ogg; codecs=opus" : rawMime;
+            const mediaId = await uploadMediaToMeta(
+              waAccount.phone_number_id,
+              waAccount.access_token,
+              body.media_url,
+              metaMime
+            );
+            payload.audio = { id: mediaId };
+          } catch (uploadErr) {
+            console.error("Audio upload fallback to link:", uploadErr);
+            payload.audio = { link: body.media_url };
+          }
+        }
+        break;
+      }
 
       case "image":
         payload.type = "image";
         payload.image = { link: body.media_url };
-        if (body.content) {
-          (payload.image as Record<string, unknown>).caption = body.content;
-        }
+        if (body.content) (payload.image as Record<string, unknown>).caption = body.content;
         break;
 
-      case "audio":
-        payload.type = "audio";
-        payload.audio = { link: body.media_url };
+      case "video":
+        payload.type = "video";
+        payload.video = { link: body.media_url };
+        if (body.content) (payload.video as Record<string, unknown>).caption = body.content;
         break;
 
       case "document":
         payload.type = "document";
-        payload.document = {
-          link: body.media_url,
-          filename: body.content || "document",
-        };
+        payload.document = { link: body.media_url, filename: body.content || "document" };
         break;
+
+      case "typing":
+        payload.status = "read";
+        payload.message_id = body.message_id;
+        payload.typing_indicator = { show: true };
+        break;
+
+      default:
+        return jsonResponse({ error: `Unsupported type: ${type}` }, 400);
     }
 
-    // Send to WhatsApp API
     const apiUrl = `${WHATSAPP_API_BASE}/${waAccount.phone_number_id}/messages`;
-    
-    console.log(`📤 Sending ${type} to ${to}`);
+    console.log(`Sending ${type} to ${to}`);
 
     const response = await fetch(apiUrl, {
       method: "POST",
@@ -108,69 +173,46 @@ Deno.serve(async (req: Request) => {
     });
 
     const result = await response.json();
+    console.log(`WhatsApp API response (${response.status}):`, JSON.stringify(result));
 
     if (!response.ok) {
-      console.error("❌ WhatsApp API error:", JSON.stringify(result));
-
-      // Update message status to failed
       if (body.conversation_id) {
         await supabase.from("messages").insert({
-          conversation_id: body.conversation_id,
-          workspace_id,
-          direction: "outbound",
-          type,
-          content: body.content,
-          status: "failed",
-          error_details: result.error,
+          conversation_id: body.conversation_id, workspace_id,
+          direction: "outbound", type, content: body.content,
+          media_url: body.media_url, status: "failed",
+          error_details: result.error || result,
         });
       }
-
-      // Update campaign log if applicable
       if (body.campaign_log_id) {
-        await supabase
-          .from("campaign_logs")
-          .update({ status: "failed", error_details: result.error })
-          .eq("id", body.campaign_log_id);
+        await supabase.from("campaign_logs").update({ status: "failed", error_details: result.error || result }).eq("id", body.campaign_log_id);
       }
-
-      return jsonResponse({ error: result.error?.message || "API error", details: result }, 502);
+      return jsonResponse({ error: result.error?.message || "WhatsApp API error", details: result }, 502);
     }
 
     const wamid = result.messages?.[0]?.id;
-    console.log(`✅ Message sent: ${wamid}`);
 
-    // Save message to DB
     if (body.conversation_id) {
       await supabase.from("messages").insert({
-        conversation_id: body.conversation_id,
-        workspace_id,
-        direction: "outbound",
-        type,
-        content: body.content,
-        media_url: body.media_url,
-        wamid,
-        status: "sent",
+        conversation_id: body.conversation_id, workspace_id,
+        direction: "outbound", type, content: body.content,
+        media_url: body.media_url, wamid, status: "sent",
       });
     }
-
-    // Update campaign log
     if (body.campaign_log_id) {
-      await supabase
-        .from("campaign_logs")
-        .update({ status: "sent", wamid, sent_at: new Date().toISOString() })
-        .eq("id", body.campaign_log_id);
+      await supabase.from("campaign_logs").update({ status: "sent", wamid, sent_at: new Date().toISOString() }).eq("id", body.campaign_log_id);
     }
 
     return jsonResponse({ success: true, wamid });
   } catch (error) {
-    console.error("❌ Send error:", error);
-    return jsonResponse({ error: "Internal server error" }, 500);
+    console.error("Send error:", error);
+    return jsonResponse({ error: String(error) }, 500);
   }
 });
 
 function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json" },
+    headers: { ...corsHeaders, "Content-Type": "application/json" },
   });
 }

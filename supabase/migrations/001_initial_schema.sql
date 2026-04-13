@@ -216,21 +216,21 @@ ALTER TABLE agent_settings ENABLE ROW LEVEL SECURITY;
 ALTER TABLE media_files ENABLE ROW LEVEL SECURITY;
 
 -- Helper function: check workspace membership
-CREATE OR REPLACE FUNCTION auth.user_workspace_ids()
+CREATE OR REPLACE FUNCTION public.user_workspace_ids()
 RETURNS SETOF UUID AS $$
-  SELECT workspace_id FROM workspace_members WHERE user_id = auth.uid();
+  SELECT workspace_id FROM public.workspace_members WHERE user_id = auth.uid();
 $$ LANGUAGE SQL SECURITY DEFINER STABLE;
 
 -- RLS Policies —  Workspace access based on membership
 
 CREATE POLICY "workspace_member_select" ON workspaces
-  FOR SELECT USING (id IN (SELECT auth.user_workspace_ids()));
+  FOR SELECT USING (id IN (SELECT public.user_workspace_ids()));
 
 CREATE POLICY "workspace_owner_all" ON workspaces
   FOR ALL USING (owner_id = auth.uid());
 
 CREATE POLICY "members_select" ON workspace_members
-  FOR SELECT USING (workspace_id IN (SELECT auth.user_workspace_ids()));
+  FOR SELECT USING (workspace_id IN (SELECT public.user_workspace_ids()));
 
 CREATE POLICY "members_manage" ON workspace_members
   FOR ALL USING (
@@ -252,7 +252,7 @@ BEGIN
     ])
   LOOP
     EXECUTE format(
-      'CREATE POLICY "workspace_access" ON %I FOR ALL USING (workspace_id IN (SELECT auth.user_workspace_ids()))',
+      'CREATE POLICY "workspace_access" ON %I FOR ALL USING (workspace_id IN (SELECT public.user_workspace_ids()))',
       tbl
     );
   END LOOP;

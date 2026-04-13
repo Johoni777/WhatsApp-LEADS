@@ -1,8 +1,7 @@
 import { formatDistanceToNow } from 'date-fns';
 import { ptBR } from 'date-fns/locale';
-import { Check, CheckCheck, Bot } from 'lucide-react';
+import { Bot } from 'lucide-react';
 import { useChatStore } from '@/stores/chatStore';
-import { useUIStore } from '@/stores/uiStore';
 import { Avatar } from '@/components/ui/Avatar';
 import type { Conversation } from '@/types/database';
 
@@ -12,28 +11,21 @@ interface ChatListItemProps {
 
 export function ChatListItem({ conversation }: ChatListItemProps) {
   const { activeConversation, setActiveConversation } = useChatStore();
-  const { isMobile } = useUIStore();
-  
-  const isActive = activeConversation?.id === conversation.id;
-  const lastMsg = conversation.last_message;
-  const contact = conversation.contact;
 
-  const handleClick = () => {
-    setActiveConversation(conversation);
-  };
+  const isActive = activeConversation?.id === conversation.id;
+  const contact = conversation.contact;
 
   return (
     <div
-      onClick={handleClick}
+      onClick={() => setActiveConversation(conversation)}
       className={`
         relative p-3 flex items-center gap-3 cursor-pointer rounded-xl transition-all duration-200 group
-        ${isActive 
-          ? 'bg-surface-800 shadow-sm border border-white/[0.06] transform scale-[1.01]' 
+        ${isActive
+          ? 'bg-surface-800 shadow-sm border border-white/[0.06] transform scale-[1.01]'
           : 'hover:bg-surface-800/50 border border-transparent hover:border-white/[0.02]'
         }
       `}
     >
-      {/* Decorative Active Indicator */}
       {isActive && (
         <div className="absolute left-0 top-1/2 -translate-y-1/2 w-1 h-8 bg-neon-green rounded-r-full shadow-[0_0_10px_rgba(16,185,129,0.5)]" />
       )}
@@ -52,31 +44,16 @@ export function ChatListItem({ conversation }: ChatListItemProps) {
           <h3 className={`text-sm font-semibold truncate ${isActive ? 'text-white' : 'text-text-100 group-hover:text-white'}`}>
             {contact?.name || 'Desconhecido'}
           </h3>
-          {lastMsg && (
-            <span className={`text-[10px] font-medium ${conversation.unread_count > 0 ? 'text-neon-green' : 'text-text-400'}`}>
-              {formatDistanceToNow(new Date(lastMsg.created_at), { locale: ptBR, addSuffix: true }).replace('cerca de ', '')}
+          {conversation.last_message_at && (
+            <span className={`text-[10px] font-medium shrink-0 ml-2 ${conversation.unread_count > 0 ? 'text-neon-green' : 'text-text-400'}`}>
+              {formatDistanceToNow(new Date(conversation.last_message_at), { locale: ptBR, addSuffix: true }).replace('cerca de ', '')}
             </span>
           )}
         </div>
-        
+
         <div className="flex items-center justify-between gap-2">
           <p className={`text-xs truncate flex-1 ${isActive ? 'text-text-200' : 'text-text-400 group-hover:text-text-300'} ${conversation.unread_count > 0 ? 'font-semibold text-white' : ''}`}>
-            {lastMsg?.direction === 'outbound' && (
-              <span className="inline-block mr-1 align-middle">
-                {lastMsg.status === 'read' ? (
-                  <CheckCheck className="w-3.5 h-3.5 text-neon-blue" />
-                ) : lastMsg.status === 'delivered' ? (
-                  <CheckCheck className="w-3.5 h-3.5 text-text-400" />
-                ) : (
-                  <Check className="w-3.5 h-3.5 text-text-400" />
-                )}
-              </span>
-            )}
-            {lastMsg?.type === 'text' 
-              ? lastMsg.content 
-              : lastMsg?.type 
-                ? `[${lastMsg.type}]` 
-                : 'Nova conversa'}
+            {conversation.last_message_preview || 'Nova conversa'}
           </p>
 
           {conversation.unread_count > 0 && (

@@ -16,7 +16,7 @@ interface UIState {
 }
 
 export const useUIStore = create<UIState>((set, get) => ({
-  sidebarOpen: true,
+  sidebarOpen: false,
   sidebarCollapsed: false,
   isMobile: window.innerWidth < 768,
   activeModal: null,
@@ -26,6 +26,6 @@ export const useUIStore = create<UIState>((set, get) => ({
   setSidebarOpen: (sidebarOpen) => set({ sidebarOpen }),
   setSidebarCollapsed: (sidebarCollapsed) => set({ sidebarCollapsed }),
   setIsMobile: (isMobile) => set({ isMobile }),
-  openModal: (activeModal, modalData = null) => set({ activeModal, modalData }),
+  openModal: (activeModal, modalData = null as any) => set({ activeModal, modalData }),
   closeModal: () => set({ activeModal: null, modalData: null }),
 }));

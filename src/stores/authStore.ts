@@ -69,23 +69,15 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   register: async (email, password, workspaceName) => {
     set({ isLoading: true });
     try {
-      const { data, error } = await supabase.auth.signUp({ email, password });
+      const { data, error } = await supabase.auth.signUp({
+        email,
+        password,
+        options: {
+          data: { workspace_name: workspaceName },
+        },
+      });
       if (error) return { error: error.message };
       if (!data.user) return { error: 'Erro ao criar conta' };
-
-      // Create workspace
-      const { data: ws, error: wsError } = await supabase
-        .from('workspaces')
-        .insert({ name: workspaceName, owner_id: data.user.id })
-        .select()
-        .single();
-
-      if (wsError) return { error: 'Conta criada, mas erro ao criar workspace' };
-
-      // Add user as member
-      await supabase
-        .from('workspace_members')
-        .insert({ workspace_id: ws.id, user_id: data.user.id, role: 'owner' });
 
       return { error: null };
     } catch {

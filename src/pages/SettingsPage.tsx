@@ -1,9 +1,10 @@
-import { useState, useEffect } from 'react';
+import { useState, useCallback } from 'react';
 import { Button } from '@/components/ui/Button';
 import { Input } from '@/components/ui/Input';
 import { Badge } from '@/components/ui/Badge';
 import { supabase } from '@/services/supabase';
 import { useAuthStore } from '@/stores/authStore';
+import { useRefreshOnFocus } from '@/hooks/useRefreshOnFocus';
 import toast from 'react-hot-toast';
 import {
   Settings, MessageSquare, Key, Globe, Shield, Save,
@@ -14,12 +15,15 @@ export function SettingsPage() {
   const { workspace } = useAuthStore();
   const [activeTab, setActiveTab] = useState<'whatsapp' | 'google' | 'workspace'>('whatsapp');
 
+  const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL || '';
+  const webhookCallbackUrl = `${SUPABASE_URL}/functions/v1/whatsapp-webhook`;
+
   // WhatsApp config
   const [waConfig, setWaConfig] = useState({
     phoneNumberId: '',
     businessAccountId: '',
     accessToken: '',
-    webhookVerifyToken: `zapflow_${Math.random().toString(36).slice(2, 10)}`,
+    webhookVerifyToken: '',
   });
   
   const [waConfigId, setWaConfigId] = useState<string | null>(null);
@@ -28,52 +32,77 @@ export function SettingsPage() {
   // Workspace
   const [wsName, setWsName] = useState(workspace?.name || '');
 
-  useEffect(() => {
-    async function loadConfig() {
-      if (!workspace) return;
-      const { data } = await supabase
-        .from('whatsapp_accounts')
-        .select('*')
-        .eq('workspace_id', workspace.id)
-        .single();
-        
-      if (data) {
-        setWaConfigId(data.id);
-        setWaConfig({
-          phoneNumberId: data.phone_number_id || '',
-          businessAccountId: data.business_account_id || '',
-          accessToken: data.access_token || '',
-          webhookVerifyToken: data.display_name || waConfig.webhookVerifyToken, // reusing display_name for verify token as hack for now
-        });
-      }
+  const loadConfig = useCallback(async () => {
+    if (!workspace?.id) return;
+
+    setWsName(workspace.name || '');
+
+    const { data } = await supabase
+      .from('whatsapp_accounts')
+      .select('*')
+      .eq('workspace_id', workspace.id)
+      .maybeSingle();
+
+    if (data) {
+      setWaConfigId(data.id);
+      setWaConfig({
+        phoneNumberId: data.phone_number_id || '',
+        businessAccountId: data.business_account_id || '',
+        accessToken: data.access_token || '',
+        webhookVerifyToken: data.webhook_verify_token || '',
+      });
+      return;
     }
-    loadConfig();
-  }, [workspace]);
+
+    setWaConfigId(null);
+    setWaConfig({
+      phoneNumberId: '',
+      businessAccountId: '',
+      accessToken: '',
+      webhookVerifyToken: '',
+    });
+  }, [workspace?.id, workspace?.name]);
+
+  useRefreshOnFocus(loadConfig, '/settings');
 
   const saveWhatsAppConfig = async () => {
     if (!workspace) return;
     setIsSaving(true);
     
-    // Check if we insert or update
-    const payload = {
+    const payload: Record<string, unknown> = {
       workspace_id: workspace.id,
       phone_number_id: waConfig.phoneNumberId,
       business_account_id: waConfig.businessAccountId,
       access_token: waConfig.accessToken,
-      display_name: waConfig.webhookVerifyToken,
       status: 'active' as const
     };
 
+    if (waConfig.webhookVerifyToken) {
+      payload.webhook_verify_token = waConfig.webhookVerifyToken;
+    }
+
     if (waConfigId) {
-      const { error } = await supabase.from('whatsapp_accounts').update(payload).eq('id', waConfigId);
-      if (error) toast.error("Falha ao atualizar");
-      else toast.success("Configuração da Meta atualizada");
+      const { data, error } = await supabase.from('whatsapp_accounts').update(payload).eq('id', waConfigId).select().single();
+      if (error) {
+        console.error('Update error:', error);
+        toast.error("Falha ao atualizar: " + error.message);
+      } else {
+        if (data?.webhook_verify_token) {
+          setWaConfig(prev => ({ ...prev, webhookVerifyToken: data.webhook_verify_token }));
+        }
+        toast.success("Configuracao da Meta atualizada");
+      }
     } else {
       const { data, error } = await supabase.from('whatsapp_accounts').insert(payload).select().single();
-      if (error) toast.error("Falha ao salvar");
-      else {
+      if (error) {
+        console.error('Insert error:', error);
+        toast.error("Falha ao salvar: " + error.message);
+      } else {
         toast.success("Credenciais da Meta vinculadas");
         setWaConfigId(data.id);
+        if (data.webhook_verify_token) {
+          setWaConfig(prev => ({ ...prev, webhookVerifyToken: data.webhook_verify_token }));
+        }
       }
     }
     
@@ -95,20 +124,20 @@ export function SettingsPage() {
   ];
 
   return (
-    <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6 animate-fade-in">
+    <div className="page-shell page-stack mobile-safe-bottom animate-fade-in">
       <div>
-        <h1 className="text-2xl font-display font-bold text-white tracking-tight">Configurações</h1>
-        <p className="text-sm text-text-400 mt-0.5">Gerencie suas integrações e conta</p>
+        <h1 className="section-title text-2xl md:text-3xl">Configurações</h1>
+        <p className="section-subtitle mt-0.5">Gerencie suas integrações e conta</p>
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-surface-800 rounded-xl w-fit border border-white/[0.04]">
+      <div className="flex w-full gap-1 overflow-x-auto p-1 bg-surface-800 rounded-xl border border-white/[0.04] sm:w-fit">
         {tabs.map(tab => (
           <button
             key={tab.id}
             onClick={() => setActiveTab(tab.id)}
             className={`
-              flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
+              flex shrink-0 items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium transition-all
               ${activeTab === tab.id
                 ? 'bg-surface-700 text-white shadow-sm'
                 : 'text-text-400 hover:text-white'
@@ -166,7 +195,7 @@ export function SettingsPage() {
            </div>
 
            <div className="mt-6 flex justify-end">
-             <Button icon={<Save className="w-4 h-4" />} loading={isSaving} onClick={saveWhatsAppConfig}>Salvar Credenciais da Meta</Button>
+             <Button className="w-full sm:w-auto" icon={<Save className="w-4 h-4" />} loading={isSaving} onClick={saveWhatsAppConfig}>Salvar Credenciais da Meta</Button>
            </div>
          </div>
 
@@ -178,19 +207,25 @@ export function SettingsPage() {
            </div>
            <div className="space-y-3">
              <div>
-               <label className="block text-sm text-text-200 mb-1">Callback URL</label>
+               <label className="block text-sm text-text-200 mb-1">Callback URL (cole na Meta)</label>
                <div className="flex items-center gap-2">
-                 <code className="flex-1 px-3 py-2 bg-surface-800 rounded-lg text-[13px] text-neon-green font-mono break-all border border-white/5">
-                   {window.location.origin}/api/whatsapp-webhook
+                 <code className="flex-1 px-3 py-2 bg-surface-800 rounded-lg text-[13px] text-neon-green font-mono break-all border border-white/5 select-all cursor-pointer">
+                   {webhookCallbackUrl}
                  </code>
                </div>
+               <p className="text-xs text-text-400 mt-1">Use esta URL exata no painel da Meta &gt; Webhooks &gt; Callback URL</p>
              </div>
-             <Input
-               label="Verify Token (Gere um e cole na Meta)"
-               value={waConfig.webhookVerifyToken}
-               onChange={(e) => setWaConfig({ ...waConfig, webhookVerifyToken: e.target.value })}
-               icon={<Shield className="w-4 h-4" />}
-             />
+             <div>
+               <label className="block text-sm text-text-200 mb-1">Verify Token (cole na Meta)</label>
+               {waConfig.webhookVerifyToken ? (
+                 <code className="block px-3 py-2 bg-surface-800 rounded-lg text-[13px] text-neon-blue font-mono break-all border border-white/5 select-all cursor-pointer">
+                   {waConfig.webhookVerifyToken}
+                 </code>
+               ) : (
+                 <p className="text-xs text-text-400 italic">Salve as credenciais acima primeiro. O token sera gerado automaticamente.</p>
+               )}
+               <p className="text-xs text-text-400 mt-1">Este token e unico para sua conta. Cole-o no campo &quot;Verify Token&quot; da Meta.</p>
+             </div>
            </div>
          </div>
        </div>
@@ -218,7 +253,7 @@ export function SettingsPage() {
               onChange={(e) => setWsName(e.target.value)}
             />
             <div className="pt-4 flex justify-end">
-              <Button icon={<Save className="w-4 h-4" />} onClick={saveWorkspaceConfig} loading={isSaving}>Alterar Organização</Button>
+              <Button className="w-full sm:w-auto" icon={<Save className="w-4 h-4" />} onClick={saveWorkspaceConfig} loading={isSaving}>Alterar Organização</Button>
             </div>
           </div>
         </div>
